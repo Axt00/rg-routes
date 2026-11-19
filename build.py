@@ -103,17 +103,21 @@ def osrm_route(pts, base):
 
 # 2-opt
 def two_opt_open(order, T):
-    order = list(order); n = len(order); improved = True
-    while improved:
+    order = list(order); n = len(order)
+
+    def cost(o):
+        return sum(T[o[k], o[k + 1]] for k in range(len(o) - 1))
+    cur = cost(order)
+    # cap passes, real roads are asymmetric
+    for _ in range(50):
         improved = False
         for i in range(0, n - 1):
             for j in range(i + 1, n):
-                a = T[order[i - 1], order[i]] if i > 0 else 0
-                b = T[order[j], order[j + 1]] if j < n - 1 else 0
-                a2 = T[order[i - 1], order[j]] if i > 0 else 0
-                b2 = T[order[i], order[j + 1]] if j < n - 1 else 0
-                if a2 + b2 < a + b - 1e-9:
-                    order[i:j + 1] = order[i:j + 1][::-1]; improved = True
+                cand = order[:i] + order[i:j + 1][::-1] + order[j + 1:]
+                c = cost(cand)
+                if c < cur - 1e-9:
+                    order, cur, improved = cand, c, True
+        if not improved: break
     return order
 
 
