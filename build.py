@@ -66,6 +66,9 @@ def load(path):
 def osrm_matrix(pts, base, block=50):
     n = len(pts)
     D = np.zeros((n, n)); T = np.zeros((n, n))
+    # single site, nothing to route
+    if n < 2:
+        return D, T
     for i0 in range(0, n, block):
         for j0 in range(0, n, block):
             I = list(range(i0, min(i0 + block, n))); J = list(range(j0, min(j0 + block, n)))
@@ -77,6 +80,13 @@ def osrm_matrix(pts, base, block=50):
                              params={"sources": src, "destinations": dst,
                                      "annotations": "distance,duration"}, timeout=120).json()
             time.sleep(DELAY)
+            # bad block (unsnappable point etc), use straight-line guess
+            if "distances" not in r:
+                print(f"  table failed ({r.get('code')}), using straight-line for a block", file=sys.stderr)
+                Do, To = offline_matrix([pts[k] for k in idx])
+                a = [idx.index(i) for i in I]; b = [idx.index(j) for j in J]
+                D[np.ix_(I, J)] = Do[np.ix_(a, b)]; T[np.ix_(I, J)] = To[np.ix_(a, b)]
+                continue
             D[np.ix_(I, J)] = np.array(r["distances"], dtype=float) / 1000
             T[np.ix_(I, J)] = np.array(r["durations"], dtype=float) / 3600
     D = np.where(np.isnan(D), 9999, D); T = np.where(np.isnan(T), 999, T)
