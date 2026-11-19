@@ -1,0 +1,75 @@
+name: Build RG routes
+
+on:
+  schedule:
+    # every Monday 7am Manila time
+    - cron: '0 23 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install packages
+        run: pip install -r requirements.txt
+
+      # road data is rebuilt once a month
+      - name: Month key
+        id: ym
+        run: echo "ym=$(date +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache road data
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: osrm
+          key: osrm-ph-${{ steps.ym.outputs.ym }}
+
+      - name: Prepare road data
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p osrm
+          curl -L -o osrm/philippines-latest.osm.pbf https://download.geofabrik.de/asia/philippines-latest.osm.pbf
+          docker run --rm -v "$PWD/osrm:/data" osrm/osrm-backend osrm-extract -p /opt/car.lua /data/philippines-latest.osm.pbf
+          docker run --rm -v "$PWD/osrm:/data" osrm/osrm-backend osrm-partition /data/philippines-latest.osrm
+          docker run --rm -v "$PWD/osrm:/data" osrm/osrm-backend osrm-customize /data/philippines-latest.osrm
+          rm osrm/philippines-latest.osm.pbf
+
+      - name: Start OSRM
+        run: |
+          docker run -d --name osrm -p 5000:5000 -v "$PWD/osrm:/data" osrm/osrm-backend osrm-routed --algorithm mld --max-table-size 100 /data/philippines-latest.osrm
+          for i in $(seq 1 60); do
+            curl -sf "http://localhost:5000/route/v1/driving/121.0,14.6;121.01,14.61" > /dev/null && break
+            sleep 5
+          done
+
+      - name: Build site
+        env:
+          SHEET_URL: ${{ secrets.SHEET_URL }}
+        run: python build.py "$SHEET_URL" --osrm http://localhost:5000 --month "$(date +%Y-%m)" --kmpl 35 --fuel-price 70 --public --out out
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
