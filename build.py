@@ -8,6 +8,7 @@ estimates fuel, and writes one map page (out/index.html) plus CSVs.
   python build.py RG_Data.xlsx --osrm http://localhost:5000
   python build.py RG_Data.xlsx --offline --cluster R6NGC2     # test only
 """
+from concurrent.futures import ThreadPoolExecutor
 import argparse, datetime, json, math, os, re, sys, time
 import numpy as np
 import pandas as pd
@@ -172,26 +173,36 @@ def plan_cluster(cl, g, sch, args, days_in_month, first_day):
             load_h[d][s] += delta + vh
             sched[i].append(d + 1)
     cache = {}
+    # optimise all routes first, then fetch road lines in parallel
+    opt = {}
+    for d in range(days_in_month):
+        for s_ in range(guards):
+            if routes[d][s_]:
+                opt[(d, s_)] = two_opt_open(routes[d][s_], T)
+    if not args.offline:
+        keys = {tuple(L) for (d, s_), L in opt.items() if len(L) > 1 and d < args.geom_days}
+        def fetch(key):
+            try:
+                return key, osrm_route([pts[k] for k in key], args.osrm)
+            except Exception as e:
+                print(f"  road line failed ({cl}): {e}", file=sys.stderr)
+                return key, None
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for key, val in ex.map(fetch, keys):
+                cache[key] = val
     out_days, rows = [], []
     for d in range(days_in_month):
         date = first_day + datetime.timedelta(days=d)
         droutes = []
         for s in range(guards):
-            L = routes[d][s]
-            if not L: continue
-            L = two_opt_open(L, T)
+            if (d, s) not in opt: continue
+            L = opt[(d, s)]
             dp = [pts[k] for k in L]
             line = [[round(a, 4), round(b, 4)] for a, b in dp]
             road = False
             if not args.offline and len(L) > 1 and d < args.geom_days:
                 key = tuple(L)
-                if key not in cache:
-                    try:
-                        cache[key] = osrm_route(dp, args.osrm)
-                    except Exception as e:
-                        print(f"  road line failed ({cl} day {d + 1}): {e}", file=sys.stderr)
-                        cache[key] = None
-                if cache[key]:
+                if cache.get(key):
                     line, road = cache[key], True
             clock = DAY_START_H; stops = []; km = dh = 0.0
             for q, k in enumerate(L):
