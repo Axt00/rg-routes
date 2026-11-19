@@ -14,7 +14,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +32,7 @@ jobs:
 
       - name: Cache road data
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: osrm
           key: osrm-ph-${{ steps.ym.outputs.ym }}
@@ -46,6 +46,14 @@ jobs:
           docker run --rm -v "$PWD/osrm:/data" osrm/osrm-backend osrm-partition /data/philippines-latest.osrm
           docker run --rm -v "$PWD/osrm:/data" osrm/osrm-backend osrm-customize /data/philippines-latest.osrm
           rm osrm/philippines-latest.osm.pbf
+
+      # save right after prep so a later failure keeps it
+      - name: Save road data
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: osrm
+          key: osrm-ph-${{ steps.ym.outputs.ym }}
 
       - name: Start OSRM
         run: |
