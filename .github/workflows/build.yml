@@ -47,6 +47,10 @@ jobs:
           docker run --rm -v "$PWD/osrm:/data" osrm/osrm-backend osrm-customize /data/philippines-latest.osrm
           rm osrm/philippines-latest.osm.pbf
 
+      - name: Fix file owner
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: sudo chown -R "$USER" osrm
+
       # save right after prep so a later failure keeps it
       - name: Save road data
         if: steps.cache.outputs.cache-hit != 'true'
